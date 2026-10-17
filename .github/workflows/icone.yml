@@ -1,0 +1,67 @@
+name: Prepara logo e icone
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/icone.yml']
+  workflow_dispatch:
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+jobs:
+  icons:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install Pillow==11.3.0
+      - name: Genera PNG e aggiorna pagina
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from PIL import Image
+          import re, base64, io, json
+          js = Path('aggiornamenti.js').read_text()
+          match = re.search(r"data:image/jpeg;base64,([^']+)", js)
+          if match:
+              image = Image.open(io.BytesIO(base64.b64decode(match.group(1)))).convert('RGB')
+              for size in (32,180,192,512):
+                  image.resize((size,size),Image.Resampling.LANCZOS).save('moneta-'+str(size)+'.png')
+              js = js.split('const source=',1)[0] + 'renderHome();\n})();'
+              Path('aggiornamenti.js').write_text(js)
+          html = Path('index.html').read_text()
+          if 'moneta-180.png' not in html:
+              links = '<link rel="icon" type="image/png" sizes="32x32" href="moneta-32.png"><link rel="apple-touch-icon" sizes="180x180" href="moneta-180.png"><link rel="manifest" href="manifest.webmanifest">'
+              html = html.replace('<title>',links+'<title>',1)
+          if 'src="moneta-192.png"' not in html:
+              html = html.replace('<header>','<header><img src="moneta-192.png" alt="Moneta da un euro" width="80" height="80">',1)
+          html = html.replace('aggiornamenti.js?v=1.1','aggiornamenti.js?v=1.2')
+          Path('index.html').write_text(html)
+          manifest = {'name':'Gestione Contabile','short_name':'Contabile','start_url':'./','scope':'./','display':'standalone','background_color':'#d8eef7','theme_color':'#0b5f8f','icons':[{'src':'moneta-'+str(s)+'.png','sizes':str(s)+'x'+str(s),'type':'image/png'} for s in (192,512)]}
+          Path('manifest.webmanifest').write_text(json.dumps(manifest))
+          for size in (32,180,192,512):
+              with Image.open('moneta-'+str(size)+'.png') as icon:
+                  assert icon.size == (size,size)
+                  icon.verify()
+          PY
+          node --check aggiornamenti.js
+      - name: Salva file generati nel repository
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add index.html aggiornamenti.js manifest.webmanifest moneta-*.png
+          if ! git diff --cached --quiet; then
+            git commit -m 'Aggiungi logo moneta e icone PNG statiche'
+            git push origin HEAD:main
+          fi
+      - name: Prepara pubblicazione
+        run: |
+          mkdir -p _site
+          cp index.html aggiornamenti.js manifest.webmanifest moneta-*.png _site/
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+      - uses: actions/deploy-pages@v4
